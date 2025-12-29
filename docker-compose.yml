@@ -1,0 +1,147 @@
+version: '3.8'
+
+services:
+  # Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: distributed-lookup-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: rabbitmq-diagnostics -q check_port_connectivity
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lookup-network
+
+  # State Store
+  redis:
+    image: redis:7-alpine
+    container_name: distributed-lookup-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - lookup-network
+
+  # API Service
+  api:
+    build:
+      context: .
+      dockerfile: src/Api/Dockerfile
+    container_name: distributed-lookup-api
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__Redis=redis:6379
+      - ConnectionStrings__RabbitMQ=rabbitmq
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - lookup-network
+
+  # GeoIP Worker (can scale)
+  geo-worker:
+    build:
+      context: .
+      dockerfile: src/Workers/GeoWorker/Dockerfile
+    environment:
+      - ConnectionStrings__RabbitMQ=rabbitmq
+      - ConnectionStrings__Redis=redis:6379
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+    networks:
+      - lookup-network
+
+  # Ping Worker (can scale)
+  ping-worker:
+    build:
+      context: .
+      dockerfile: src/Workers/PingWorker/Dockerfile
+    environment:
+      - ConnectionStrings__RabbitMQ=rabbitmq
+      - ConnectionStrings__Redis=redis:6379
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+    networks:
+      - lookup-network
+
+  # RDAP Worker (can scale)
+  rdap-worker:
+    build:
+      context: .
+      dockerfile: src/Workers/RdapWorker/Dockerfile
+    environment:
+      - ConnectionStrings__RabbitMQ=rabbitmq
+      - ConnectionStrings__Redis=redis:6379
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+    networks:
+      - lookup-network
+
+  # Reverse-DNS Worker (can scale)
+  reversedns-worker:
+    build:
+      context: .
+      dockerfile: src/Workers/ReverseDnsWorker/Dockerfile
+    dns:
+      - 8.8.8.8
+    environment:
+      - ConnectionStrings__RabbitMQ=rabbitmq
+      - ConnectionStrings__Redis=redis:6379
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+    networks:
+      - lookup-network
+
+networks:
+  lookup-network:
+    driver: bridge
