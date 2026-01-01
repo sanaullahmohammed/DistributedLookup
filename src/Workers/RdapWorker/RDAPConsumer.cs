@@ -1,16 +1,18 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DistributedLookup.Application.Interfaces;
+using DistributedLookup.Application.Workers;
 using DistributedLookup.Contracts.Commands;
-using DistributedLookup.Contracts.Events;
 using DistributedLookup.Domain.Entities;
-using MassTransit;
 
-namespace DistributedLookup.Workers.Rdap;
+namespace DistributedLookup.Workers.RdapWorker;
 
-public class RDAPConsumer : IConsumer<CheckRDAP>
+/// <summary>
+/// Consumer that processes RDAP lookup commands.
+/// Runs in a separate process/container as a worker.
+/// </summary>
+public sealed class RDAPConsumer(ILogger<RDAPConsumer> logger, HttpClient httpClient, IJobRepository repository) : LookupWorkerBase<CheckRDAP>(logger, repository)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -19,179 +21,99 @@ public class RDAPConsumer : IConsumer<CheckRDAP>
     };
 
     // IANA RDAP DNS bootstrap (TLD -> RDAP base URLs)
-    private static readonly Uri IanaDnsBootstrapUri = new("https://data.iana.org/rdap/dns.json");
-    private static readonly SemaphoreSlim DnsBootstrapLock = new(1, 1);
+    private static readonly Uri _ianaDnsBootstrapUri = new("https://data.iana.org/rdap/dns.json");
+    private static readonly SemaphoreSlim _dnsBootstrapLock = new(1, 1);
     private static Dictionary<string, string[]>? _dnsBootstrapByTld;
     private static DateTimeOffset _dnsBootstrapFetchedAt = DateTimeOffset.MinValue;
-    private static readonly TimeSpan DnsBootstrapTtl = TimeSpan.FromDays(7);
+    private static readonly TimeSpan _dnsBootstrapTtl = TimeSpan.FromDays(7);
 
-    private readonly ILogger<RDAPConsumer> _logger;
-    private readonly HttpClient _httpClient;
-    private readonly IJobRepository _repository;
+    private readonly HttpClient _httpClient = httpClient;
 
-    public RDAPConsumer(ILogger<RDAPConsumer> logger, HttpClient httpClient, IJobRepository repository)
+    protected override ServiceType ServiceType => ServiceType.RDAP;
+
+    protected override async Task<object> PerformLookupAsync(CheckRDAP command, CancellationToken cancellationToken)
     {
-        _logger = logger;
-        _httpClient = httpClient;
-        _repository = repository;
-    }
+        string rdapUrl;
+        string effectiveTargetForLookup = command.Target;
 
-    public async Task Consume(ConsumeContext<CheckRDAP> context)
-    {
-        var sw = Stopwatch.StartNew();
-
-        _logger.LogInformation(
-            "Processing RDAP lookup for job {JobId}, target: {Target}, targetType: {TargetType}",
-            context.Message.JobId,
-            context.Message.Target,
-            context.Message.TargetType
-        );
-
-        try
+        if (command.TargetType == LookupTarget.IPAddress)
         {
-            string rdapUrl;
-            string effectiveTargetForLookup = context.Message.Target;
-
-            if (context.Message.TargetType == LookupTarget.IPAddress)
-            {
-                // (Unchanged) IP RDAP
-                rdapUrl = $"https://rdap.arin.net/registry/ip/{Uri.EscapeDataString(context.Message.Target)}";
-            }
-            else
-            {
-                // Domain RDAP: normalize + reduce subdomains -> apex domain, then discover RDAP server by TLD
-                var normalizedHost = NormalizeDomainTarget(context.Message.Target);
-                var apexDomain = GetApexDomain(normalizedHost);
-
-                effectiveTargetForLookup = apexDomain;
-
-                if (!string.Equals(context.Message.Target, apexDomain, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogInformation(
-                        "Normalized domain target from '{Raw}' to apex domain '{Apex}' for job {JobId}",
-                        context.Message.Target,
-                        apexDomain,
-                        context.Message.JobId
-                    );
-                }
-
-                var tld = GetTld(apexDomain);
-                var baseUrl = await ResolveDomainRdapBaseUrlAsync(tld, context.CancellationToken);
-
-                // Fallback to rdap.org if bootstrap lookup fails
-                rdapUrl = baseUrl != null
-                    ? $"{baseUrl.TrimEnd('/')}/domain/{Uri.EscapeDataString(apexDomain)}"
-                    : $"https://rdap.org/domain/{Uri.EscapeDataString(apexDomain)}";
-            }
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, rdapUrl);
-            request.Headers.Accept.ParseAdd("application/rdap+json");
-
-            using var response = await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                context.CancellationToken
-            );
-
-            if (!response.IsSuccessStatusCode)
-            {
-                sw.Stop();
-                await SaveAndPublishFailure(
-                    context,
-                    $"RDAP server returned {response.StatusCode} for '{effectiveTargetForLookup}'",
-                    sw.Elapsed
-                );
-                return;
-            }
-
-            var rawData = await response.Content.ReadAsStringAsync(context.CancellationToken);
-
-            // 1) Validate JSON and normalize formatting (removes newlines/pretty-print whitespace)
-            using var doc = JsonDocument.Parse(rawData);
-            var normalizedJson = JsonSerializer.Serialize(doc.RootElement, JsonOptions);
-
-            // 2) OPTIONAL: extract a few fields (safe model) for logging/metrics without losing data
-            RDAPResponse? parsed = null;
-            try
-            {
-                parsed = JsonSerializer.Deserialize<RDAPResponse>(normalizedJson, JsonOptions);
-            }
-            catch
-            {
-                _logger.LogWarning(
-                    "Failed to parse RDAP response into simplified model for job {JobId}",
-                    context.Message.JobId
-                );
-            }
-
-            sw.Stop();
-
-            await SaveResult(context.Message.JobId, ServiceType.RDAP, normalizedJson, sw.Elapsed);
-
-            _logger.LogInformation(
-                "RDAP lookup completed for job {JobId} in {Duration}ms. " +
-                "ObjectClass={ObjectClass}, Handle={Handle}, LdhName={LdhName}, Name={Name}, Range={Start}-{End}",
-                context.Message.JobId,
-                sw.ElapsedMilliseconds,
-                parsed?.ObjectClassName,
-                parsed?.Handle,
-                parsed?.LdhName ?? parsed?.UnicodeName,
-                parsed?.Name,
-                parsed?.StartAddress,
-                parsed?.EndAddress
-            );
-
-            await context.Publish(new TaskCompleted
-            {
-                JobId = context.Message.JobId,
-                ServiceType = ServiceType.RDAP,
-                Success = true,
-                Data = normalizedJson,
-                Duration = sw.Elapsed
-            });
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            _logger.LogError(ex, "Error processing RDAP lookup for job {JobId}", context.Message.JobId);
-            await SaveAndPublishFailure(context, ex.Message, sw.Elapsed);
-        }
-    }
-
-    private async Task SaveResult(string jobId, ServiceType serviceType, object data, TimeSpan duration)
-    {
-        var job = await _repository.GetByIdAsync(jobId);
-        if (job != null)
-        {
-            var result = ServiceResult.CreateSuccess(serviceType, data, duration);
-            job.AddResult(serviceType, result);
-            await _repository.SaveAsync(job);
-            _logger.LogInformation("Saved RDAP result to repository for job {JobId}", jobId);
+            // IP RDAP
+            rdapUrl = $"https://rdap.arin.net/registry/ip/{Uri.EscapeDataString(command.Target)}";
         }
         else
         {
-            _logger.LogWarning("Job {JobId} not found in repository", jobId);
-        }
-    }
+            // Domain RDAP: normalize + reduce subdomains -> apex domain, then discover RDAP server by TLD
+            var normalizedHost = NormalizeDomainTarget(command.Target);
+            var apexDomain = GetApexDomain(normalizedHost);
 
-    private async Task SaveAndPublishFailure(ConsumeContext<CheckRDAP> context, string error, TimeSpan duration)
-    {
-        var job = await _repository.GetByIdAsync(context.Message.JobId);
-        if (job != null)
-        {
-            var result = ServiceResult.CreateFailure(ServiceType.RDAP, error, duration);
-            job.AddResult(ServiceType.RDAP, result);
-            await _repository.SaveAsync(job);
+            effectiveTargetForLookup = apexDomain;
+
+            if (!string.Equals(command.Target, apexDomain, StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.LogInformation(
+                    "Normalized domain target from '{Raw}' to apex domain '{Apex}' for job {JobId}",
+                    command.Target,
+                    apexDomain,
+                    command.JobId
+                );
+            }
+
+            var tld = GetTld(apexDomain);
+            var baseUrl = await ResolveDomainRdapBaseUrlAsync(tld, cancellationToken);
+
+            // Fallback to rdap.org if bootstrap lookup fails
+            rdapUrl = baseUrl != null
+                ? $"{baseUrl.TrimEnd('/')}/domain/{Uri.EscapeDataString(apexDomain)}"
+                : $"https://rdap.org/domain/{Uri.EscapeDataString(apexDomain)}";
         }
 
-        await context.Publish(new TaskCompleted
+        using var request = new HttpRequestMessage(HttpMethod.Get, rdapUrl);
+        request.Headers.Accept.ParseAdd("application/rdap+json");
+
+        using var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken
+        );
+
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"RDAP server returned {response.StatusCode} for '{effectiveTargetForLookup}'");
+
+        var rawData = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        // 1) Validate JSON and normalize formatting (removes newlines/pretty-print whitespace)
+        using var doc = JsonDocument.Parse(rawData);
+        var rootElement = doc.RootElement.Clone(); // Clone so it survives JsonDocument disposal
+
+        // 2) OPTIONAL: extract a few fields (safe model) for logging/metrics without losing data
+        RDAPResponse? parsed = null;
+        try
         {
-            JobId = context.Message.JobId,
-            ServiceType = ServiceType.RDAP,
-            Success = false,
-            ErrorMessage = error,
-            Duration = duration
-        });
+            parsed = JsonSerializer.Deserialize<RDAPResponse>(rawData, JsonOptions);
+        }
+        catch
+        {
+            Logger.LogWarning(
+                "Failed to parse RDAP response into simplified model for job {JobId}",
+                command.JobId
+            );
+        }
+
+        Logger.LogInformation(
+            "RDAP lookup completed for job {JobId}. " +
+            "ObjectClass={ObjectClass}, Handle={Handle}, LdhName={LdhName}, Name={Name}, Range={Start}-{End}",
+            command.JobId,
+            parsed?.ObjectClassName,
+            parsed?.Handle,
+            parsed?.LdhName ?? parsed?.UnicodeName,
+            parsed?.Name,
+            parsed?.StartAddress,
+            parsed?.EndAddress
+        );
+
+        // Return the JsonElement - base class will serialize it
+        return rootElement;
     }
 
     // ------------------------
@@ -258,22 +180,22 @@ public class RDAPConsumer : IConsumer<CheckRDAP>
         if (bootstrap.TryGetValue(tld, out var urls) && urls.Length > 0)
             return urls[0];
 
-        _logger.LogWarning("No RDAP bootstrap entry found for TLD '{Tld}'. Falling back to rdap.org.", tld);
+        Logger.LogWarning("No RDAP bootstrap entry found for TLD '{Tld}'. Falling back to rdap.org.", tld);
         return null;
     }
 
     private async Task<Dictionary<string, string[]>> GetDnsBootstrapAsync(CancellationToken ct)
     {
-        if (_dnsBootstrapByTld != null && DateTimeOffset.UtcNow - _dnsBootstrapFetchedAt < DnsBootstrapTtl)
+        if (_dnsBootstrapByTld != null && DateTimeOffset.UtcNow - _dnsBootstrapFetchedAt < _dnsBootstrapTtl)
             return _dnsBootstrapByTld;
 
-        await DnsBootstrapLock.WaitAsync(ct);
+        await _dnsBootstrapLock.WaitAsync(ct);
         try
         {
-            if (_dnsBootstrapByTld != null && DateTimeOffset.UtcNow - _dnsBootstrapFetchedAt < DnsBootstrapTtl)
+            if (_dnsBootstrapByTld != null && DateTimeOffset.UtcNow - _dnsBootstrapFetchedAt < _dnsBootstrapTtl)
                 return _dnsBootstrapByTld;
 
-            using var resp = await _httpClient.GetAsync(IanaDnsBootstrapUri, ct);
+            using var resp = await _httpClient.GetAsync(_ianaDnsBootstrapUri, ct);
             resp.EnsureSuccessStatusCode();
 
             var json = await resp.Content.ReadAsStringAsync(ct);
@@ -282,20 +204,20 @@ public class RDAPConsumer : IConsumer<CheckRDAP>
             _dnsBootstrapByTld = parsed;
             _dnsBootstrapFetchedAt = DateTimeOffset.UtcNow;
 
-            _logger.LogInformation("Fetched and cached IANA RDAP DNS bootstrap. Entries={Count}", parsed.Count);
+            Logger.LogInformation("Fetched and cached IANA RDAP DNS bootstrap. Entries={Count}", parsed.Count);
 
             return parsed;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to fetch/parse IANA RDAP DNS bootstrap; will use fallback.");
+            Logger.LogWarning(ex, "Failed to fetch/parse IANA RDAP DNS bootstrap; will use fallback.");
 
             // If we have a previous cached copy (even if stale), keep using it.
             return _dnsBootstrapByTld ?? new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         }
         finally
         {
-            DnsBootstrapLock.Release();
+            _dnsBootstrapLock.Release();
         }
     }
 

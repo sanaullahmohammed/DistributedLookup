@@ -5,7 +5,7 @@ using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Contracts.Events;
 using DistributedLookup.Domain.Entities;
-using DistributedLookup.Workers.Geo;
+using DistributedLookup.Workers.GeoWorker;
 using FluentAssertions;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -296,6 +296,7 @@ public class GeoIPConsumerTests
     private static Mock<ConsumeContext<CheckGeoIP>> CreateConsumeContext(CheckGeoIP msg, Action<TaskCompleted> onPublish)
     {
         var ctx = new Mock<ConsumeContext<CheckGeoIP>>(MockBehavior.Strict);
+        ctx.Setup(x => x.CancellationToken).Returns(CancellationToken.None);
 
         ctx.SetupGet(c => c.Message).Returns(msg);
 

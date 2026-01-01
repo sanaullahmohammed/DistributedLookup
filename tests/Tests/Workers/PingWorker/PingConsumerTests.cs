@@ -3,7 +3,7 @@ using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Contracts.Events;
 using DistributedLookup.Domain.Entities;
-using DistributedLookup.Workers.Ping;
+using DistributedLookup.Workers.PingWorker;
 using FluentAssertions;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -231,6 +231,7 @@ public class PingConsumerTests
     private static Mock<ConsumeContext<CheckPing>> CreateConsumeContext(CheckPing msg, Action<TaskCompleted> onPublish)
     {
         var ctx = new Mock<ConsumeContext<CheckPing>>(MockBehavior.Strict);
+        ctx.Setup(x => x.CancellationToken).Returns(CancellationToken.None);
 
         ctx.SetupGet(c => c.Message).Returns(msg);
 

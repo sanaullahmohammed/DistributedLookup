@@ -1,6 +1,6 @@
 using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Infrastructure.Persistence;
-using DistributedLookup.Workers.ReverseDNS;
+using DistributedLookup.Workers.ReverseDnsWorker;
 using MassTransit;
 using StackExchange.Redis;
 
