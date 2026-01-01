@@ -50,7 +50,7 @@ public class LookupControllerTests
         badRequest.Value.Should().BeOfType<LookupController.ErrorResponse>();
 
         var payload = (LookupController.ErrorResponse)badRequest.Value!;
-        payload.Error.Should().Be("Target must be a valid IP address or domain");
+        payload.Error.Should().Be("Target must be a valid IP address or domain name");
 
         // Ensure we logged receipt
         VerifyLoggerContains(logger, LogLevel.Information, "Received lookup request");
