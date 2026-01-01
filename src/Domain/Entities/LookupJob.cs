@@ -42,6 +42,40 @@ public class LookupJob
         _requestedServices.AddRange(services);
     }
 
+    /// <summary>
+    /// Reconstitutes a LookupJob from persisted state.
+    /// Used by the repository layer to rebuild domain entities from storage.
+    /// </summary>
+    public static LookupJob Reconstitute(
+        string jobId,
+        string target,
+        LookupTarget targetType,
+        JobStatus status,
+        DateTime createdAt,
+        DateTime? completedAt,
+        IEnumerable<ServiceType> requestedServices,
+        IEnumerable<ServiceResult> results)
+    {
+        var job = new LookupJob
+        {
+            JobId = jobId,
+            Target = target,
+            TargetType = targetType,
+            Status = status,
+            CreatedAt = createdAt,
+            CompletedAt = completedAt
+        };
+
+        job._requestedServices.AddRange(requestedServices);
+        
+        foreach (var result in results)
+        {
+            job._results[result.ServiceType] = result;
+        }
+
+        return job;
+    }
+
     public void MarkAsProcessing()
     {
         if (Status != JobStatus.Pending)
