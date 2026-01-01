@@ -23,7 +23,7 @@ public class RedisJobRepository : IJobRepository
     {
         var db = _redis.GetDatabase();
         var key = GetKey(jobId);
-        
+
         var json = await db.StringGetAsync(key);
         if (json.IsNullOrEmpty)
         {
@@ -38,7 +38,7 @@ public class RedisJobRepository : IJobRepository
         var db = _redis.GetDatabase();
         var key = GetKey(job.JobId);
         var json = SerializeJob(job);
-        
+
         // Set with 24-hour expiration
         await db.StringSetAsync(key, json, TimeSpan.FromHours(24));
     }
@@ -85,39 +85,25 @@ public class RedisJobRepository : IJobRepository
             throw new InvalidOperationException("Failed to deserialize job");
         }
 
-        // Reconstruct domain entity
-        var job = new LookupJob(dto.JobId, dto.Target, dto.TargetType, dto.RequestedServices);
+        var results = dto.Results.Select(r => ServiceResult.Reconstitute(
+            r.ServiceType,
+            r.Success,
+            r.Data,
+            r.ErrorMessage,
+            r.CompletedAt,
+            TimeSpan.FromMilliseconds(r.DurationMs)
+        )).ToList();
 
-        // Use reflection to set private fields (not ideal, but works for demo)
-        var statusField = typeof(LookupJob).GetField("<Status>k__BackingField",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        statusField?.SetValue(job, dto.Status);
-
-        var completedField = typeof(LookupJob).GetField("<CompletedAt>k__BackingField",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        completedField?.SetValue(job, dto.CompletedAt);
-
-        // Add results
-        foreach (var result in dto.Results)
-        {
-            var serviceResult = result.Success
-                ? ServiceResult.CreateSuccess(
-                    result.ServiceType,
-                    result.Data ?? "{}",
-                    TimeSpan.FromMilliseconds(result.DurationMs))
-                : ServiceResult.CreateFailure(
-                    result.ServiceType,
-                    result.ErrorMessage ?? "Unknown error",
-                    TimeSpan.FromMilliseconds(result.DurationMs));
-
-            // Add result (this will bypass validation if job is already complete)
-            var resultsField = typeof(LookupJob).GetField("_results",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var resultsDict = resultsField?.GetValue(job) as Dictionary<ServiceType, ServiceResult>;
-            resultsDict?.Add(result.ServiceType, serviceResult);
-        }
-
-        return job;
+        return LookupJob.Reconstitute(
+            dto.JobId,
+            dto.Target,
+            dto.TargetType,
+            dto.Status,
+            dto.CreatedAt,
+            dto.CompletedAt,
+            dto.RequestedServices,
+            results
+        );
     }
 
     // DTOs for serialization

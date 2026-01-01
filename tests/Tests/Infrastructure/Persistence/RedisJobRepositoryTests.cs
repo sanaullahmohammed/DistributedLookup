@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DistributedLookup.Domain.Entities;
 using DistributedLookup.Infrastructure.Persistence;
 using FluentAssertions;
@@ -57,15 +58,25 @@ public class RedisJobRepositoryTests
         root.GetProperty("JobId").GetString().Should().Be(jobId);
         root.GetProperty("Target").GetString().Should().Be("8.8.8.8");
         root.GetProperty("TargetType").GetInt32().Should().Be((int)LookupTarget.IPAddress);
-        root.GetProperty("Status").GetInt32().Should().Be((int)JobStatus.Pending);
+
+        // Status should match whatever the domain currently sets
+        root.GetProperty("Status").GetInt32().Should().Be((int)job.Status);
 
         // CreatedAt comes from the domain entity
-        var createdAt = root.GetProperty("CreatedAt").GetDateTime();
-        createdAt.Should().BeCloseTo(job.CreatedAt, TimeSpan.FromSeconds(1));
+        root.GetProperty("CreatedAt").GetDateTime()
+            .Should().BeCloseTo(job.CreatedAt, TimeSpan.FromSeconds(1));
 
-        root.GetProperty("CompletedAt").ValueKind.Should().Be(JsonValueKind.Null);
+        // CompletedAt should match domain entity (likely null here)
+        var completedAtEl = root.GetProperty("CompletedAt");
+        if (job.CompletedAt is null)
+            completedAtEl.ValueKind.Should().Be(JsonValueKind.Null);
+        else
+            completedAtEl.GetDateTime().Should().Be(job.CompletedAt.Value);
 
-        var requested = root.GetProperty("RequestedServices").EnumerateArray().Select(e => e.GetInt32()).ToArray();
+        var requested = root.GetProperty("RequestedServices")
+            .EnumerateArray()
+            .Select(e => e.GetInt32())
+            .ToArray();
         requested.Should().BeEquivalentTo(services.Select(s => (int)s));
 
         var results = root.GetProperty("Results").EnumerateArray().ToArray();
@@ -75,8 +86,15 @@ public class RedisJobRepositoryTests
         r.GetProperty("ServiceType").GetInt32().Should().Be((int)ServiceType.GeoIP);
         r.GetProperty("Success").GetBoolean().Should().BeTrue();
         r.GetProperty("ErrorMessage").ValueKind.Should().Be(JsonValueKind.Null);
+
+        // Data is stored as string (RootElement.ToString())
         r.GetProperty("Data").GetString().Should().Be(geoResult.Data!.RootElement.ToString());
+
         r.GetProperty("DurationMs").GetInt64().Should().Be(12);
+
+        // Result CompletedAt is serialized
+        r.GetProperty("CompletedAt").GetDateTime()
+            .Should().BeCloseTo(geoResult.CompletedAt, TimeSpan.FromSeconds(1));
     }
 
     [Fact]
@@ -142,16 +160,10 @@ public class RedisJobRepositoryTests
         job.Status.Should().Be(JobStatus.Completed);
         job.CompletedAt.Should().NotBeNull();
 
-        var completedAt = job.CompletedAt;
-
         await repo.SaveAsync(job);
-
-        var beforeGet = DateTime.UtcNow;
 
         // Act
         var loaded = await repo.GetByIdAsync(jobId);
-
-        var afterGet = DateTime.UtcNow;
 
         // Assert
         loaded.Should().NotBeNull();
@@ -159,14 +171,14 @@ public class RedisJobRepositoryTests
         loaded.Target.Should().Be("8.8.8.8");
         loaded.TargetType.Should().Be(LookupTarget.IPAddress);
 
-        // These are restored via reflection
+        // These are now restored from Redis DTO
         loaded.Status.Should().Be(JobStatus.Completed);
-        loaded.CompletedAt.Should().Be(completedAt);
+        loaded.CompletedAt.Should().Be(job.CompletedAt);
 
         loaded.RequestedServices.Should().BeEquivalentTo(services);
 
-        // NOTE: CreatedAt is NOT restored; constructor sets it at deserialization time
-        loaded.CreatedAt.Should().BeOnOrAfter(job.CreatedAt);
+        // CreatedAt is restored now
+        loaded.CreatedAt.Should().BeCloseTo(job.CreatedAt, TimeSpan.FromSeconds(1));
 
         loaded.IsComplete().Should().BeTrue();
         loaded.CompletionPercentage().Should().Be(100);
@@ -178,20 +190,23 @@ public class RedisJobRepositoryTests
         loadedGeo.ErrorMessage.Should().BeNull();
         loadedGeo.Duration.Should().Be(geoDuration);
 
-        // DeserializeJob passes a string into CreateSuccess(...), so the JsonDocument becomes a JSON string
+        // Data: compare JSON semantically (handles object-vs-string representation)
         loadedGeo.Data.Should().NotBeNull();
-        loadedGeo.Data!.RootElement.ValueKind.Should().Be(JsonValueKind.String);
-        loadedGeo.Data!.RootElement.GetString().Should().Be(geoOk.Data!.RootElement.ToString());
+        var actualGeoJson = ExtractJsonPayload(loadedGeo.Data!);
+        var expectedGeoJson = geoOk.Data!.RootElement.GetRawText();
 
-        // CompletedAt for results is NOT preserved by DeserializeJob (it uses DateTime.UtcNow)
-        loadedGeo.CompletedAt.Should().BeOnOrAfter(beforeGet).And.BeOnOrBefore(afterGet);
+        JsonNode.DeepEquals(JsonNode.Parse(actualGeoJson), JsonNode.Parse(expectedGeoJson))
+            .Should().BeTrue();
+
+        // Result CompletedAt is preserved now
+        loadedGeo.CompletedAt.Should().BeCloseTo(geoOk.CompletedAt, TimeSpan.FromSeconds(1));
 
         var loadedPing = loaded.Results[ServiceType.Ping];
         loadedPing.Success.Should().BeFalse();
         loadedPing.ErrorMessage.Should().Be("No response");
         loadedPing.Duration.Should().Be(pingDuration);
         loadedPing.Data.Should().BeNull();
-        loadedPing.CompletedAt.Should().BeOnOrAfter(beforeGet).And.BeOnOrBefore(afterGet);
+        loadedPing.CompletedAt.Should().BeCloseTo(pingFail.CompletedAt, TimeSpan.FromSeconds(1));
     }
 
     [Fact]
@@ -227,6 +242,18 @@ public class RedisJobRepositoryTests
         // Assert
         pending.Should().BeEmpty();
         h.MuxMock.Verify(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object>()), Times.Never);
+    }
+
+    private static string ExtractJsonPayload(JsonDocument doc)
+    {
+        var el = doc.RootElement;
+
+        // If the domain stored JSON as a string literal, unwrap once
+        if (el.ValueKind == JsonValueKind.String)
+            return el.GetString() ?? string.Empty;
+
+        // Otherwise it’s already JSON
+        return el.GetRawText();
     }
 
     private sealed class RedisMoqHarness

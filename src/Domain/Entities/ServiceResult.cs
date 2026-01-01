@@ -38,4 +38,29 @@ public record ServiceResult
             Duration = duration
         };
     }
+
+    /// <summary>
+    /// Reconstitutes a ServiceResult from persisted state.
+    /// Preserves the original timestamp from storage.
+    /// </summary>
+    public static ServiceResult Reconstitute(
+        ServiceType serviceType,
+        bool success,
+        string? data,
+        string? errorMessage,
+        DateTime completedAt,
+        TimeSpan duration)
+    {
+        return new ServiceResult
+        {
+            ServiceType = serviceType,
+            Success = success,
+            Data = !string.IsNullOrEmpty(data) 
+                ? JsonSerializer.SerializeToDocument(data) 
+                : null,
+            ErrorMessage = errorMessage,
+            CompletedAt = completedAt,
+            Duration = duration
+        };
+    }
 }
