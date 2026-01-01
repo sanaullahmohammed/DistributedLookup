@@ -117,7 +117,166 @@ sequenceDiagram
     deactivate API
 ```
 
-## 3. State Machine (Saga)
+## 3. Direct Worker Persistence Flow 🆕
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant Store as IWorkerResultStore
+    participant RMQ as RabbitMQ
+    participant Saga as Saga Machine
+    participant Redis as Redis
+
+    Note over W,Redis: New Pattern: Direct Persistence
+    
+    W->>W: Perform Lookup
+    W->>Store: SaveResultAsync(data)
+    Store->>Redis: Save result data
+    Redis-->>Store: Confirmation
+    Store-->>W: Return ResultLocation
+    
+    W->>RMQ: Publish TaskCompleted<br/>(with ResultLocation, no data)
+    RMQ->>Saga: Deliver event
+    Saga->>Saga: Track completion
+    Saga->>Redis: Update job status
+    
+    Note over W,Redis: Data saved BEFORE notification
+    Note over W,Redis: Events contain location, not data
+```
+
+## 4. Worker Base Class Pattern 🆕
+
+```mermaid
+classDiagram
+    class LookupWorkerBase~TCommand~ {
+        <<abstract>>
+        #Logger: ILogger
+        #ResultStore: IWorkerResultStore
+        +Consume(ConsumeContext) Task
+        #PerformLookupAsync(TCommand)* Task~object~
+        #ValidateTarget(TCommand) string?
+        #ServiceType* ServiceType
+    }
+    
+    class GeoIPConsumer {
+        -httpClient: HttpClient
+        #ServiceType: ServiceType
+        #PerformLookupAsync(CheckGeoIP) Task~object~
+    }
+    
+    class PingConsumer {
+        #ServiceType: ServiceType
+        #PerformLookupAsync(CheckPing) Task~object~
+    }
+    
+    class RdapConsumer {
+        -httpClient: HttpClient
+        #ServiceType: ServiceType
+        #PerformLookupAsync(CheckRDAP) Task~object~
+    }
+    
+    class ReverseDnsConsumer {
+        #ServiceType: ServiceType
+        #PerformLookupAsync(CheckReverseDNS) Task~object~
+        #ValidateTarget(CheckReverseDNS) string?
+    }
+    
+    LookupWorkerBase~TCommand~ <|-- GeoIPConsumer
+    LookupWorkerBase~TCommand~ <|-- PingConsumer
+    LookupWorkerBase~TCommand~ <|-- RdapConsumer
+    LookupWorkerBase~TCommand~ <|-- ReverseDnsConsumer
+    
+    note for LookupWorkerBase~TCommand~ "Template Method Pattern:\n1. Timing\n2. Validation\n3. PerformLookupAsync\n4. Save to Store\n5. Publish Event\n6. Error Handling"
+    
+    note for GeoIPConsumer "Only implements:\nPerformLookupAsync()\n\nBase class handles:\neverything else!"
+```
+
+## 5. Polymorphic Storage Architecture 🆕
+
+```mermaid
+classDiagram
+    class ResultLocation {
+        <<abstract>>
+        +StorageType* StorageType
+    }
+    
+    class RedisResultLocation {
+        +StorageType: StorageType
+        +Key: string
+        +Database: int
+        +Ttl: TimeSpan?
+    }
+    
+    class S3ResultLocation {
+        +StorageType: StorageType
+        +Bucket: string
+        +Key: string
+        +Region: string?
+        +PresignedUrl: string?
+    }
+    
+    class DynamoDBResultLocation {
+        +StorageType: StorageType
+        +TableName: string
+        +PartitionKey: string
+        +SortKey: string?
+    }
+    
+    class FileSystemResultLocation {
+        +StorageType: StorageType
+        +Path: string
+    }
+    
+    class AzureBlobResultLocation {
+        +StorageType: StorageType
+        +ContainerName: string
+        +BlobName: string
+        +SasUrl: string?
+    }
+    
+    ResultLocation <|-- RedisResultLocation
+    ResultLocation <|-- S3ResultLocation
+    ResultLocation <|-- DynamoDBResultLocation
+    ResultLocation <|-- FileSystemResultLocation
+    ResultLocation <|-- AzureBlobResultLocation
+    
+    note for ResultLocation "JSON Polymorphism:\n$type discriminator"
+    note for RedisResultLocation "Current Implementation"
+    note for S3ResultLocation "Future: Large results"
+    note for DynamoDBResultLocation "Future: Structured data"
+```
+
+## 6. Storage Abstraction Flow 🆕
+
+```mermaid
+flowchart TD
+    Worker[Worker] --> |Uses| Resolver[IWorkerResultStoreResolver]
+    Resolver --> |Returns| Store[IWorkerResultStore]
+    Store --> |Implements| Redis[RedisWorkerResultStore]
+    Store --> |Implements| S3[S3WorkerResultStore]
+    Store --> |Implements| Dynamo[DynamoDBWorkerResultStore]
+    
+    Redis --> |Saves to| RedisDB[(Redis)]
+    S3 --> |Saves to| S3Bucket[(S3 Bucket)]
+    Dynamo --> |Saves to| DynamoDB[(DynamoDB)]
+    
+    Redis --> |Returns| RedisLoc[RedisResultLocation]
+    S3 --> |Returns| S3Loc[S3ResultLocation]
+    Dynamo --> |Returns| DynamoLoc[DynamoDBResultLocation]
+    
+    RedisLoc --> |Stored in| Saga[Saga State]
+    S3Loc --> |Stored in| Saga
+    DynamoLoc --> |Stored in| Saga
+    
+    style Redis fill:#f9f,stroke:#333,stroke-width:2px
+    style S3 fill:#eee,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
+    style Dynamo fill:#eee,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
+    
+    classDef future fill:#eee,stroke:#333,stroke-dasharray: 5 5
+    class S3,Dynamo,S3Bucket,DynamoDB,S3Loc,DynamoLoc future
+```
+
+## 7. State Machine (Saga)
 
 ```mermaid
 flowchart TD
@@ -142,7 +301,7 @@ flowchart TD
     style Check fill:#ff9,stroke:#333,stroke-width:2px
 ```
 
-## 4. Worker Processing Flow
+## 8. Worker Processing Flow
 
 ```mermaid
 flowchart TD
@@ -183,7 +342,7 @@ flowchart TD
     style Publish fill:#eee,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5
 ```
 
-## 5. Data Storage Model
+## 9. Data Storage Model
 
 ### Redis Key Structure
 
@@ -209,9 +368,13 @@ saga:{jobId}
 ├─ currentState: string
 ├─ pendingServices: ServiceType[]
 └─ completedServices: ServiceType[]
+
+result:{jobId}:{serviceType}  🆕
+├─ data: json (actual result data)
+└─ ttl: 3600 seconds
 ```
 
-## 6. Scaling Model
+## 10. Scaling Model
 
 ```mermaid
 flowchart TD
@@ -275,7 +438,7 @@ flowchart TD
     class API1,API2,API3,W_Geo,W_Ping,W_Rdap,W_Rdns cluster;
 ```
 
-## 7. Failure Scenarios
+## 11. Failure Scenarios
 
 ### Scenario A: Worker Crashes Mid-Process
 
@@ -355,7 +518,7 @@ flowchart TD
     class Recovery success;
 ```
 
-## 8. Extension Points
+## 12. Extension Points
 
 ```mermaid
 flowchart LR
@@ -427,7 +590,7 @@ flowchart LR
     class F_Comm_Grp,F_Data_Grp,F_K8s group;
 ```
 
-## 9. Monitoring Points
+## 13. Monitoring Points
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -447,6 +610,7 @@ flowchart LR
 │  - Processing time per service              │
 │  - Success/failure rate                     │
 │  - Active worker count                      │
+│  - Storage backend latency 🆕               │
 │                                             │
 │ Redis:                                      │
 │  - Hit rate                                 │
@@ -457,9 +621,46 @@ flowchart LR
 │  - Jobs in flight                           │
 │  - Average completion time                  │
 │  - State transition errors                  │
+│                                             │
+│ Storage Layer: 🆕                           │
+│  - Write latency (p50/p95/p99)              │
+│  - Backend distribution (Redis/S3/etc)      │
+│  - ResultLocation types in use              │
 └─────────────────────────────────────────────┘
 ```
 
 ---
 
-These diagrams illustrate the **distributed, asynchronous, fault-tolerant** nature of the system. Each component is independently scalable and resilient to failures.
+## Architecture Highlights 🆕
+
+### Template Method Pattern Benefits
+
+**Before (Each worker ~150 lines):**
+- Duplicated timing code
+- Duplicated validation
+- Duplicated persistence logic
+- Duplicated error handling
+- Inconsistent patterns
+
+**After (Each worker ~30 lines):**
+- Single source of truth
+- Guaranteed consistency
+- Trivial to add new services
+- 90% code reduction
+
+### Storage Abstraction Benefits
+
+**Current State:**
+- Redis for all results
+- Fast but limited by memory
+- Single storage type
+
+**Future Ready:**
+- Small results → Redis (fast)
+- Large results → S3 (cheap)
+- Structured data → DynamoDB
+- No worker code changes needed
+
+---
+
+These diagrams illustrate the **distributed, asynchronous, fault-tolerant** nature of the system. Each component is independently scalable and resilient to failures. The new worker base class pattern and storage abstraction layer demonstrate production-ready design patterns that eliminate duplication and enable future extensibility.
