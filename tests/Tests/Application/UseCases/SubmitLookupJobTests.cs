@@ -47,7 +47,7 @@ public class SubmitLookupJobTests
         // Assert
         result.IsSuccess.Should().BeFalse();
         result.JobId.Should().BeNull();
-        result.Error.Should().Be("Target must be a valid IP address or domain");
+        result.Error.Should().Be("Target must be a valid IP address or domain name");
 
         repo.VerifyNoOtherCalls();
         publisher.VerifyNoOtherCalls();
@@ -271,4 +271,158 @@ public class SubmitLookupJobTests
         repo.VerifyNoOtherCalls();
         publisher.VerifyNoOtherCalls();
     }
+
+    #region Additional Validation Tests
+
+    [Theory]
+    [InlineData("1.1.1.1.1.1")]           // Too many octets
+    [InlineData("286.4345.3244321.45345")] // Invalid octets
+    [InlineData("256.1.1.1")]             // Octet > 255
+    public async Task ExecuteAsync_WhenTargetIsInvalidIPv4_ShouldReturnFailure(string target)
+    {
+        // Arrange
+        var repo = new Mock<IJobRepository>(MockBehavior.Strict);
+        var publisher = new Mock<IPublishEndpoint>(MockBehavior.Strict);
+
+        var sut = new SubmitLookupJob(repo.Object, publisher.Object);
+
+        // Act
+        var result = await sut.ExecuteAsync(new SubmitLookupJob.Request(target));
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Contain("Invalid IP address format");
+
+        repo.VerifyNoOtherCalls();
+        publisher.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("::1")]                   // IPv6 loopback
+    [InlineData("2001:db8::1")]           // IPv6 documentation
+    [InlineData("fe80::1")]               // IPv6 link-local
+    public async Task ExecuteAsync_WhenTargetIsValidIPv6_ShouldSucceed(string target)
+    {
+        // Arrange
+        var repo = new Mock<IJobRepository>(MockBehavior.Strict);
+        var publisher = new Mock<IPublishEndpoint>(MockBehavior.Strict);
+
+        repo.Setup(r => r.SaveAsync(It.IsAny<LookupJob>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        publisher.Setup(p => p.Publish(It.IsAny<JobSubmitted>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = new SubmitLookupJob(repo.Object, publisher.Object);
+
+        // Act
+        var result = await sut.ExecuteAsync(new SubmitLookupJob.Request(target));
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.JobId.Should().NotBeNull();
+
+        repo.Verify(r => r.SaveAsync(It.IsAny<LookupJob>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("domain.123")]            // Numeric TLD
+    [InlineData("test.456")]              // Numeric TLD
+    public async Task ExecuteAsync_WhenTargetHasNumericTLD_ShouldReturnFailure(string target)
+    {
+        // Arrange
+        var repo = new Mock<IJobRepository>(MockBehavior.Strict);
+        var publisher = new Mock<IPublishEndpoint>(MockBehavior.Strict);
+
+        var sut = new SubmitLookupJob(repo.Object, publisher.Object);
+
+        // Act
+        var result = await sut.ExecuteAsync(new SubmitLookupJob.Request(target));
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().NotBeNullOrEmpty();
+
+        repo.VerifyNoOtherCalls();
+        publisher.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("www.google.com")]
+    [InlineData("sub.domain.example.com")]
+    [InlineData("a.io")]
+    public async Task ExecuteAsync_WhenTargetIsValidDomain_ShouldSucceed(string target)
+    {
+        // Arrange
+        var repo = new Mock<IJobRepository>(MockBehavior.Strict);
+        var publisher = new Mock<IPublishEndpoint>(MockBehavior.Strict);
+
+        LookupJob? savedJob = null;
+
+        repo.Setup(r => r.SaveAsync(It.IsAny<LookupJob>(), It.IsAny<CancellationToken>()))
+            .Callback<LookupJob, CancellationToken>((job, _) => savedJob = job)
+            .Returns(Task.CompletedTask);
+
+        publisher.Setup(p => p.Publish(It.IsAny<JobSubmitted>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = new SubmitLookupJob(repo.Object, publisher.Object);
+
+        // Act
+        var result = await sut.ExecuteAsync(new SubmitLookupJob.Request(target));
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        savedJob.Should().NotBeNull();
+        savedJob!.TargetType.Should().Be(LookupTarget.Domain);
+
+        repo.Verify(r => r.SaveAsync(It.IsAny<LookupJob>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTargetHasConsecutiveDots_ShouldReturnFailure()
+    {
+        // Arrange
+        var repo = new Mock<IJobRepository>(MockBehavior.Strict);
+        var publisher = new Mock<IPublishEndpoint>(MockBehavior.Strict);
+
+        var sut = new SubmitLookupJob(repo.Object, publisher.Object);
+
+        // Act
+        var result = await sut.ExecuteAsync(new SubmitLookupJob.Request("domain..com"));
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().NotBeNullOrEmpty();
+
+        repo.VerifyNoOtherCalls();
+        publisher.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTargetHasLeadingTrailingWhitespace_ShouldValidateSuccessfully()
+    {
+        // Arrange
+        var repo = new Mock<IJobRepository>(MockBehavior.Strict);
+        var publisher = new Mock<IPublishEndpoint>(MockBehavior.Strict);
+
+        repo.Setup(r => r.SaveAsync(It.IsAny<LookupJob>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        publisher.Setup(p => p.Publish(It.IsAny<JobSubmitted>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var sut = new SubmitLookupJob(repo.Object, publisher.Object);
+
+        // Act - whitespace around valid IP should still validate successfully
+        var result = await sut.ExecuteAsync(new SubmitLookupJob.Request("  8.8.8.8  "));
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        result.JobId.Should().NotBeNull();
+
+        repo.Verify(r => r.SaveAsync(It.IsAny<LookupJob>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
 }
