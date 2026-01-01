@@ -27,7 +27,8 @@ public class LookupJobStateMachine : MassTransitStateMachine<LookupJobState>
                 {
                     context.Saga.JobId = context.Message.JobId;
                     context.Saga.PendingServices = context.Message.Services.ToList();
-                    context.Saga.CreatedAt = DateTime.UtcNow;
+                    // Use timestamp from event to ensure consistency with job.CreatedAt
+                    context.Saga.CreatedAt = context.Message.Timestamp;
                 })
                 .ThenAsync(async context =>
                 {
@@ -47,17 +48,31 @@ public class LookupJobStateMachine : MassTransitStateMachine<LookupJobState>
             When(TaskCompleted)
                 .Then(context =>
                 {
-                    if (context.Saga.PendingServices.Remove(context.Message.ServiceType))
+                    var serviceType = context.Message.ServiceType;
+                    
+                    // Store task metadata with result location (NOT actual result data)
+                    // Actual results are stored independently by workers via IWorkerResultStore
+                    context.Saga.TaskResults[(int)serviceType] = new TaskMetadata
                     {
-                        context.Saga.CompletedServices.Add(context.Message.ServiceType);
+                        Success = context.Message.Success,
+                        Duration = context.Message.Duration,
+                        CompletedAt = context.Message.Timestamp,
+                        ErrorMessage = context.Message.ErrorMessage,
+                        Location = context.Message.ResultLocation
+                    };
+                    
+                    if (context.Saga.PendingServices.Remove(serviceType))
+                    {
+                        context.Saga.CompletedServices.Add(serviceType);
                         logger.LogDebug("Job {JobId}: Received {Service}. Pending: {Pending}", 
-                            context.Saga.JobId, context.Message.ServiceType, context.Saga.PendingServices.Count);
+                            context.Saga.JobId, serviceType, context.Saga.PendingServices.Count);
                     }
                 })
                 .If(context => context.Saga.PendingServices.Count == 0,
                     binder => binder
                         .Then(context => 
                         {
+                            // CompletedAt set ONLY when ALL tasks complete (fixes timing bug)
                             context.Saga.CompletedAt = DateTime.UtcNow;
                             logger.LogInformation("Job {JobId} Completed successfully.", context.Saga.JobId);
                         })

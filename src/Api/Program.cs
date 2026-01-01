@@ -30,6 +30,12 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 // Repository
 builder.Services.AddScoped<IJobRepository, RedisJobRepository>();
 
+// Saga State Repository (for reading saga state directly)
+builder.Services.AddScoped<ISagaStateRepository, RedisSagaStateRepository>();
+
+// Worker Result Reader (read-only access to results stored by workers)
+builder.Services.AddScoped<IWorkerResultReader, RedisWorkerResultReader>();
+
 // Use Cases
 builder.Services.AddScoped<SubmitLookupJob>();
 builder.Services.AddScoped<GetJobStatus>();

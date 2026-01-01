@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Application.Workers;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Domain.Entities;
@@ -9,8 +8,9 @@ namespace DistributedLookup.Workers.GeoWorker;
 /// <summary>
 /// Consumer that processes GeoIP lookup commands.
 /// Runs in a separate process/container as a worker.
+/// Uses IWorkerResultStore for result storage.
 /// </summary>
-public sealed class GeoIPConsumer(ILogger<GeoIPConsumer> logger, HttpClient httpClient, IJobRepository repository) : LookupWorkerBase<CheckGeoIP>(logger, repository)
+public sealed class GeoIPConsumer(ILogger<GeoIPConsumer> logger, HttpClient httpClient, IWorkerResultStore resultStore) : LookupWorkerBase<CheckGeoIP>(logger, resultStore)
 {
     private readonly HttpClient _httpClient = httpClient;
 

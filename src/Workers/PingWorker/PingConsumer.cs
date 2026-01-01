@@ -1,5 +1,4 @@
 using System.Net.NetworkInformation;
-using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Application.Workers;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Domain.Entities;
@@ -9,8 +8,9 @@ namespace DistributedLookup.Workers.PingWorker;
 /// <summary>
 /// Consumer that processes Ping commands.
 /// Runs in a separate process/container as a worker.
+/// Uses IWorkerResultStore for result storage.
 /// </summary>
-public sealed class PingConsumer(ILogger<PingConsumer> logger, IJobRepository repository) : LookupWorkerBase<CheckPing>(logger, repository)
+public sealed class PingConsumer(ILogger<PingConsumer> logger, IWorkerResultStore resultStore) : LookupWorkerBase<CheckPing>(logger, resultStore)
 {
     protected override ServiceType ServiceType => ServiceType.Ping;
 

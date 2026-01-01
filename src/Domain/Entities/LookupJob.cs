@@ -3,6 +3,9 @@ namespace DistributedLookup.Domain.Entities;
 /// <summary>
 /// Represents the aggregate root for a distributed lookup job.
 /// Follows DDD principles - all state changes go through domain methods.
+/// 
+/// NOTE: This entity does NOT store results. Results are stored independently
+/// by workers via IWorkerResultStore. This entity only tracks job metadata.
 /// </summary>
 public class LookupJob
 {
@@ -15,18 +18,17 @@ public class LookupJob
     
     private readonly List<ServiceType> _requestedServices = new();
     public IReadOnlyList<ServiceType> RequestedServices => _requestedServices.AsReadOnly();
-    
-    private readonly Dictionary<ServiceType, ServiceResult> _results = new();
-    public IReadOnlyDictionary<ServiceType, ServiceResult> Results => _results;
-
-    // Private constructor for EF/serialization
-    private LookupJob() 
-    {
-        JobId = string.Empty;
-        Target = string.Empty;
-    }
 
     public LookupJob(string jobId, string target, LookupTarget targetType, IEnumerable<ServiceType> services)
+        : this(jobId, target, targetType, services, DateTime.UtcNow)
+    {
+    }
+
+    /// <summary>
+    /// Constructor with explicit createdAt timestamp for factory pattern.
+    /// Ensures consistent timestamps between job and saga.
+    /// </summary>
+    public LookupJob(string jobId, string target, LookupTarget targetType, IEnumerable<ServiceType> services, DateTime createdAt)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             throw new ArgumentException("JobId cannot be empty", nameof(jobId));
@@ -38,42 +40,30 @@ public class LookupJob
         Target = target;
         TargetType = targetType;
         Status = JobStatus.Pending;
-        CreatedAt = DateTime.UtcNow;
+        CreatedAt = createdAt;
         _requestedServices.AddRange(services);
     }
 
     /// <summary>
-    /// Reconstitutes a LookupJob from persisted state.
-    /// Used by the repository layer to rebuild domain entities from storage.
+    /// Internal constructor for reconstituting from storage.
+    /// Bypasses validation since data is already validated.
     /// </summary>
-    public static LookupJob Reconstitute(
+    internal LookupJob(
         string jobId,
         string target,
         LookupTarget targetType,
-        JobStatus status,
+        IEnumerable<ServiceType> services,
         DateTime createdAt,
-        DateTime? completedAt,
-        IEnumerable<ServiceType> requestedServices,
-        IEnumerable<ServiceResult> results)
+        JobStatus status,
+        DateTime? completedAt)
     {
-        var job = new LookupJob
-        {
-            JobId = jobId,
-            Target = target,
-            TargetType = targetType,
-            Status = status,
-            CreatedAt = createdAt,
-            CompletedAt = completedAt
-        };
-
-        job._requestedServices.AddRange(requestedServices);
-        
-        foreach (var result in results)
-        {
-            job._results[result.ServiceType] = result;
-        }
-
-        return job;
+        JobId = jobId;
+        Target = target;
+        TargetType = targetType;
+        CreatedAt = createdAt;
+        Status = status;
+        CompletedAt = completedAt;
+        _requestedServices.AddRange(services);
     }
 
     public void MarkAsProcessing()
@@ -84,24 +74,7 @@ public class LookupJob
         Status = JobStatus.Processing;
     }
 
-    public void AddResult(ServiceType serviceType, ServiceResult result)
-    {
-        if (Status == JobStatus.Completed || Status == JobStatus.Failed)
-            throw new InvalidOperationException($"Cannot add results to a {Status} job");
-
-        if (!_requestedServices.Contains(serviceType))
-            throw new InvalidOperationException($"Service {serviceType} was not requested for this job");
-
-        _results[serviceType] = result;
-
-        // Check if all services have completed
-        if (_results.Count == _requestedServices.Count)
-        {
-            CompleteJob();
-        }
-    }
-
-    private void CompleteJob()
+    public void MarkAsCompleted()
     {
         Status = JobStatus.Completed;
         CompletedAt = DateTime.UtcNow;
@@ -111,14 +84,7 @@ public class LookupJob
     {
         Status = JobStatus.Failed;
         CompletedAt = DateTime.UtcNow;
-        // In a real system, we'd store the failure reason
     }
 
     public bool IsComplete() => Status == JobStatus.Completed || Status == JobStatus.Failed;
-
-    public int CompletionPercentage()
-    {
-        if (_requestedServices.Count == 0) return 0;
-        return (_results.Count * 100) / _requestedServices.Count;
-    }
 }

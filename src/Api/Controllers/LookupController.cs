@@ -78,6 +78,12 @@ public class LookupController : ControllerBase
             return NotFound(new ErrorResponse { Error = "Job not found" });
         }
 
+        // Add X-Response-Warnings header if there are warnings (graceful degradation)
+        if (status.Warnings?.Count > 0)
+        {
+            Response.Headers.Append("X-Response-Warnings", string.Join("; ", status.Warnings));
+        }
+
         return Ok(status);
     }
 
@@ -93,7 +99,7 @@ public class LookupController : ControllerBase
             .Select(s => new ServiceInfo
             {
                 Name = s.ToString(),
-                Value = s,
+                Value = (int)s,
                 Description = GetServiceDescription(s)
             })
             .ToArray();
@@ -132,10 +138,11 @@ public class LookupController : ControllerBase
         public string Error { get; init; } = string.Empty;
     }
 
+    // This allows clients to use numeric values (0, 1, 2, 3) when submitting lookup requests.
     public record ServiceInfo
     {
         public string Name { get; init; } = string.Empty;
-        public ServiceType Value { get; init; }
+        public int Value { get; init; }
         public string Description { get; init; } = string.Empty;
     }
 }

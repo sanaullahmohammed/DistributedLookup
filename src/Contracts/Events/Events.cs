@@ -15,17 +15,24 @@ public record JobSubmitted
 }
 
 /// <summary>
-/// Event published when a task completes (success or failure)
+/// Event published when a task completes (success or failure).
+/// Workers publish this after storing results in their independent storage.
+/// Contains ResultLocation metadata (WHERE result is stored), NOT the actual data.
 /// </summary>
 public record TaskCompleted
 {
     public string JobId { get; init; } = string.Empty;
     public ServiceType ServiceType { get; init; }
     public bool Success { get; init; }
-    public string? Data { get; init; }
     public string? ErrorMessage { get; init; }
     public TimeSpan Duration { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
+    
+    /// <summary>
+    /// Location where the worker stored the result data.
+    /// Saga stores this metadata to enable API result retrieval.
+    /// </summary>
+    public ResultLocation? ResultLocation { get; init; }
 }
 
 /// <summary>

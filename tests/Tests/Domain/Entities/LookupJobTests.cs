@@ -7,7 +7,7 @@ namespace Tests.Domain.Entities;
 public class LookupJobTests
 {
     [Fact]
-    public void Constructor_ShouldCreateJobWithPendingStatus()
+    public void Constructor_ShouldCreateJobWithPendingStatus_AndMetadata()
     {
         // Arrange
         var before = DateTime.UtcNow;
@@ -34,9 +34,26 @@ public class LookupJobTests
         job.CompletedAt.Should().BeNull();
 
         job.RequestedServices.Should().BeEquivalentTo(services);
-        job.Results.Should().BeEmpty();
         job.IsComplete().Should().BeFalse();
-        job.CompletionPercentage().Should().Be(0);
+    }
+
+    [Fact]
+    public void Constructor_WithExplicitCreatedAt_ShouldUseProvidedTimestamp()
+    {
+        // Arrange
+        var createdAt = DateTime.UtcNow.AddMinutes(-5);
+        var jobId = Guid.NewGuid().ToString();
+        var target = "example.com";
+        var services = new[] { ServiceType.GeoIP };
+
+        // Act
+        var job = new LookupJob(jobId, target, LookupTarget.Domain, services, createdAt);
+
+        // Assert
+        job.CreatedAt.Should().Be(createdAt);
+        job.CreatedAt.Kind.Should().Be(DateTimeKind.Utc);
+        job.Status.Should().Be(JobStatus.Pending);
+        job.CompletedAt.Should().BeNull();
     }
 
     [Theory]
@@ -82,25 +99,6 @@ public class LookupJobTests
     }
 
     [Fact]
-    public void CompletionPercentage_WhenNoServicesRequested_ShouldReturnZero()
-    {
-        // Arrange
-        var job = CreateTestJob(Array.Empty<ServiceType>());
-
-        // Assert
-        job.RequestedServices.Should().BeEmpty();
-        job.CompletionPercentage().Should().Be(0);
-        job.IsComplete().Should().BeFalse();
-
-        // And adding any result should fail because nothing was requested
-        var result = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { }, TimeSpan.FromMilliseconds(100));
-        Action act = () => job.AddResult(ServiceType.GeoIP, result);
-
-        act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*not requested*");
-    }
-
-    [Fact]
     public void MarkAsProcessing_WhenPending_ShouldTransitionToProcessing()
     {
         // Arrange
@@ -111,6 +109,8 @@ public class LookupJobTests
 
         // Assert
         job.Status.Should().Be(JobStatus.Processing);
+        job.CompletedAt.Should().BeNull();
+        job.IsComplete().Should().BeFalse();
     }
 
     [Fact]
@@ -125,65 +125,18 @@ public class LookupJobTests
 
         // Assert
         act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*Processing*");
+            .WithMessage("*Cannot transition from*");
     }
 
     [Fact]
-    public void AddResult_ShouldUpdateCompletionPercentage()
+    public void MarkAsCompleted_ShouldSetStatusToCompleted_AndSetCompletedAtUtc()
     {
         // Arrange
-        var services = new[] { ServiceType.GeoIP, ServiceType.Ping };
-        var job = CreateTestJob(services);
-
-        var result = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { }, TimeSpan.FromMilliseconds(100));
-
-        // Act
-        job.AddResult(ServiceType.GeoIP, result);
-
-        // Assert
-        job.Results.Should().HaveCount(1);
-        job.Results.Should().ContainKey(ServiceType.GeoIP);
-        job.CompletionPercentage().Should().Be(50); // 1 out of 2
-        job.Status.Should().Be(JobStatus.Pending); // AddResult doesn't change status unless completing
-        job.CompletedAt.Should().BeNull();
-    }
-
-    [Fact]
-    public void AddResult_WhenSameServiceIsAddedAgain_BeforeCompletion_ShouldOverwriteAndNotChangePercentage()
-    {
-        // Arrange
-        var services = new[] { ServiceType.GeoIP, ServiceType.Ping };
-        var job = CreateTestJob(services);
-
-        var result1 = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { v = 1 }, TimeSpan.FromMilliseconds(100));
-        var result2 = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { v = 2 }, TimeSpan.FromMilliseconds(150));
-
-        // Act
-        job.AddResult(ServiceType.GeoIP, result1);
-        job.AddResult(ServiceType.GeoIP, result2);
-
-        // Assert
-        job.Results.Should().HaveCount(1);
-        job.CompletionPercentage().Should().Be(50);
-        job.Status.Should().Be(JobStatus.Pending);
-        job.CompletedAt.Should().BeNull();
-    }
-
-    [Fact]
-    public void AddResult_WhenAllServicesComplete_ShouldMarkAsCompleted()
-    {
-        // Arrange
-        var services = new[] { ServiceType.GeoIP, ServiceType.Ping };
-        var job = CreateTestJob(services);
-
+        var job = CreateTestJob();
         var before = DateTime.UtcNow;
 
-        var result1 = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { }, TimeSpan.FromMilliseconds(100));
-        var result2 = ServiceResult.CreateSuccess(ServiceType.Ping, new { }, TimeSpan.FromMilliseconds(200));
-
         // Act
-        job.AddResult(ServiceType.GeoIP, result1);
-        job.AddResult(ServiceType.Ping, result2);
+        job.MarkAsCompleted();
 
         var after = DateTime.UtcNow;
 
@@ -195,62 +148,10 @@ public class LookupJobTests
         job.CompletedAt!.Value.Kind.Should().Be(DateTimeKind.Utc);
 
         job.IsComplete().Should().BeTrue();
-        job.CompletionPercentage().Should().Be(100);
     }
 
     [Fact]
-    public void AddResult_ForUnrequestedService_ShouldThrowException()
-    {
-        // Arrange
-        var job = CreateTestJob(new[] { ServiceType.GeoIP });
-        var result = ServiceResult.CreateSuccess(ServiceType.Ping, new { }, TimeSpan.FromMilliseconds(100));
-
-        // Act
-        Action act = () => job.AddResult(ServiceType.Ping, result);
-
-        // Assert
-        act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*not requested*");
-    }
-
-    [Fact]
-    public void AddResult_WhenAlreadyCompleted_ShouldThrowException()
-    {
-        // Arrange
-        var services = new[] { ServiceType.GeoIP };
-        var job = CreateTestJob(services);
-
-        var result = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { }, TimeSpan.FromMilliseconds(100));
-        job.AddResult(ServiceType.GeoIP, result); // completes the job
-
-        // Act - try to add another result
-        var result2 = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { }, TimeSpan.FromMilliseconds(100));
-        Action act = () => job.AddResult(ServiceType.GeoIP, result2);
-
-        // Assert
-        act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*Completed*");
-    }
-
-    [Fact]
-    public void AddResult_WhenJobIsFailed_ShouldThrowException()
-    {
-        // Arrange
-        var job = CreateTestJob(new[] { ServiceType.GeoIP });
-        job.MarkAsFailed("Test failure");
-
-        var result = ServiceResult.CreateSuccess(ServiceType.GeoIP, new { }, TimeSpan.FromMilliseconds(100));
-
-        // Act
-        Action act = () => job.AddResult(ServiceType.GeoIP, result);
-
-        // Assert
-        act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*Failed*");
-    }
-
-    [Fact]
-    public void MarkAsFailed_ShouldSetStatusToFailed()
+    public void MarkAsFailed_ShouldSetStatusToFailed_AndSetCompletedAtUtc()
     {
         // Arrange
         var job = CreateTestJob();
@@ -271,7 +172,23 @@ public class LookupJobTests
         job.IsComplete().Should().BeTrue();
     }
 
-    private LookupJob CreateTestJob(ServiceType[]? services = null)
+    [Fact]
+    public void IsComplete_ShouldReturnTrue_ForCompletedOrFailed()
+    {
+        // Completed
+        var completedJob = CreateTestJob();
+        completedJob.IsComplete().Should().BeFalse();
+        completedJob.MarkAsCompleted();
+        completedJob.IsComplete().Should().BeTrue();
+
+        // Failed
+        var failedJob = CreateTestJob();
+        failedJob.IsComplete().Should().BeFalse();
+        failedJob.MarkAsFailed("boom");
+        failedJob.IsComplete().Should().BeTrue();
+    }
+
+    private static LookupJob CreateTestJob(ServiceType[]? services = null)
     {
         return new LookupJob(
             Guid.NewGuid().ToString(),

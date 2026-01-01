@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Application.Workers;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Domain.Entities;
@@ -10,8 +9,9 @@ namespace DistributedLookup.Workers.ReverseDnsWorker;
 /// <summary>
 /// Consumer that processes reverse DNS (PTR) lookup commands.
 /// Runs in a separate process/container as a worker.
+/// Uses IWorkerResultStore for result storage.
 /// </summary>
-public sealed class ReverseDnsConsumer(ILogger<ReverseDnsConsumer> logger, IJobRepository repository) : LookupWorkerBase<CheckReverseDNS>(logger, repository)
+public sealed class ReverseDnsConsumer(ILogger<ReverseDnsConsumer> logger, IWorkerResultStore resultStore) : LookupWorkerBase<CheckReverseDNS>(logger, resultStore)
 {
     protected override ServiceType ServiceType => ServiceType.ReverseDNS;
 

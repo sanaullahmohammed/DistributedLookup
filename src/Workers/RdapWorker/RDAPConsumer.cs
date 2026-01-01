@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Application.Workers;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Domain.Entities;
@@ -11,8 +10,9 @@ namespace DistributedLookup.Workers.RdapWorker;
 /// <summary>
 /// Consumer that processes RDAP lookup commands.
 /// Runs in a separate process/container as a worker.
+/// Uses IWorkerResultStore for result storage.
 /// </summary>
-public sealed class RDAPConsumer(ILogger<RDAPConsumer> logger, HttpClient httpClient, IJobRepository repository) : LookupWorkerBase<CheckRDAP>(logger, repository)
+public sealed class RDAPConsumer(ILogger<RDAPConsumer> logger, HttpClient httpClient, IWorkerResultStore resultStore) : LookupWorkerBase<CheckRDAP>(logger, resultStore)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
