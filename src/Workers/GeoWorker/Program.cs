@@ -1,6 +1,6 @@
 using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Infrastructure.Persistence;
-using DistributedLookup.Workers.Geo;
+using DistributedLookup.Workers.GeoWorker;
 using MassTransit;
 using StackExchange.Redis;
 

@@ -1,134 +1,58 @@
-using System.Diagnostics;
 using System.Net.NetworkInformation;
 using DistributedLookup.Application.Interfaces;
+using DistributedLookup.Application.Workers;
 using DistributedLookup.Contracts.Commands;
-using DistributedLookup.Contracts.Events;
 using DistributedLookup.Domain.Entities;
-using MassTransit;
 
-namespace DistributedLookup.Workers.Ping;
+namespace DistributedLookup.Workers.PingWorker;
 
 /// <summary>
 /// Consumer that processes Ping commands.
 /// Runs in a separate process/container as a worker.
-/// Persists results directly to the repository.
 /// </summary>
-public class PingConsumer : IConsumer<CheckPing>
+public sealed class PingConsumer(ILogger<PingConsumer> logger, IJobRepository repository) : LookupWorkerBase<CheckPing>(logger, repository)
 {
-    private readonly ILogger<PingConsumer> _logger;
-    private readonly IJobRepository _repository;
+    protected override ServiceType ServiceType => ServiceType.Ping;
 
-    public PingConsumer(ILogger<PingConsumer> logger, IJobRepository repository)
+    protected override async Task<object> PerformLookupAsync(CheckPing command, CancellationToken cancellationToken)
     {
-        _logger = logger;
-        _repository = repository;
-    }
+        using var pinger = new System.Net.NetworkInformation.Ping();
+        var results = new List<PingResult>();
 
-    public async Task Consume(ConsumeContext<CheckPing> context)
-    {
-        var sw = Stopwatch.StartNew();
-        _logger.LogInformation("Processing Ping check for job {JobId}, target: {Target}",
-            context.Message.JobId, context.Message.Target);
-
-        try
+        // Send 4 pings
+        for (int i = 0; i < 4; i++)
         {
-            using var pinger = new System.Net.NetworkInformation.Ping();
-            var results = new List<PingResult>();
-
-            // Send 4 pings
-            for (int i = 0; i < 4; i++)
+            var reply = await pinger.SendPingAsync(command.Target, 5000);
+            results.Add(new PingResult
             {
-                var reply = await pinger.SendPingAsync(context.Message.Target, 5000);
-                results.Add(new PingResult
-                {
-                    Success = reply.Status == IPStatus.Success,
-                    RoundtripTime = reply.RoundtripTime,
-                    Status = reply.Status.ToString(),
-                    TTL = reply.Options?.Ttl ?? 0
-                });
-
-                if (i < 3) await Task.Delay(500); // Wait between pings
-            }
-
-            sw.Stop();
-
-            var successful = results.Count(r => r.Success);
-            var avgRtt = results.Where(r => r.Success).Select(r => r.RoundtripTime).DefaultIfEmpty(0).Average();
-
-            var data = new PingResponse
-            {
-                Target = context.Message.Target,
-                PacketsSent = results.Count,
-                PacketsReceived = successful,
-                PacketLoss = ((results.Count - successful) * 100.0 / results.Count),
-                AverageRoundtripMs = avgRtt,
-                MinRoundtripMs = results.Where(r => r.Success).Select(r => r.RoundtripTime).DefaultIfEmpty(0).Min(),
-                MaxRoundtripMs = results.Where(r => r.Success).Select(r => r.RoundtripTime).DefaultIfEmpty(0).Max(),
-                Results = results
-            };
-
-            // Persist result to repository
-            await SaveResult(context.Message.JobId, ServiceType.Ping, data, sw.Elapsed);
-
-            _logger.LogInformation("Ping check completed for job {JobId}: {Received}/{Sent} packets, avg {Avg}ms",
-                context.Message.JobId, successful, results.Count, avgRtt);
-
-            // Notify saga
-            await context.Publish(new TaskCompleted
-            {
-                JobId = context.Message.JobId,
-                ServiceType = ServiceType.Ping,
-                Success = true,
-                Data = System.Text.Json.JsonSerializer.Serialize(data),
-                Duration = sw.Elapsed
+                Success = reply.Status == IPStatus.Success,
+                RoundtripTime = reply.RoundtripTime,
+                Status = reply.Status.ToString(),
+                TTL = reply.Options?.Ttl ?? 0
             });
-        }
-        catch (Exception ex)
-        {
-            sw.Stop();
-            _logger.LogError(ex, "Error processing Ping check for job {JobId}", context.Message.JobId);
-            
-            // Persist failure to repository
-            await SaveAndPublishFailure(context, ex.Message, sw.Elapsed);
-        }
-    }
 
-    private async Task SaveResult(string jobId, ServiceType serviceType, object data, TimeSpan duration)
-    {
-        var job = await _repository.GetByIdAsync(jobId);
-        if (job != null)
-        {
-            var result = ServiceResult.CreateSuccess(serviceType, data, duration);
-            job.AddResult(serviceType, result);
-            await _repository.SaveAsync(job);
-            _logger.LogInformation("Saved Ping result to repository for job {JobId}", jobId);
-        }
-        else
-        {
-            _logger.LogWarning("Job {JobId} not found in repository", jobId);
-        }
-    }
-
-    private async Task SaveAndPublishFailure(ConsumeContext<CheckPing> context, string error, TimeSpan duration)
-    {
-        // Persist failure to repository
-        var job = await _repository.GetByIdAsync(context.Message.JobId);
-        if (job != null)
-        {
-            var result = ServiceResult.CreateFailure(ServiceType.Ping, error, duration);
-            job.AddResult(ServiceType.Ping, result);
-            await _repository.SaveAsync(job);
+            if (i < 3) await Task.Delay(500, cancellationToken); // Wait between pings
         }
 
-        // Notify saga
-        await context.Publish(new TaskCompleted
+        var successful = results.Count(r => r.Success);
+        var avgRtt = results.Where(r => r.Success).Select(r => r.RoundtripTime).DefaultIfEmpty(0).Average();
+
+        var data = new PingResponse
         {
-            JobId = context.Message.JobId,
-            ServiceType = ServiceType.Ping,
-            Success = false,
-            ErrorMessage = error,
-            Duration = duration
-        });
+            Target = command.Target,
+            PacketsSent = results.Count,
+            PacketsReceived = successful,
+            PacketLoss = ((results.Count - successful) * 100.0 / results.Count),
+            AverageRoundtripMs = avgRtt,
+            MinRoundtripMs = results.Where(r => r.Success).Select(r => r.RoundtripTime).DefaultIfEmpty(0).Min(),
+            MaxRoundtripMs = results.Where(r => r.Success).Select(r => r.RoundtripTime).DefaultIfEmpty(0).Max(),
+            Results = results
+        };
+
+        Logger.LogInformation("Ping check completed for job {JobId}: {Received}/{Sent} packets, avg {Avg}ms",
+            command.JobId, successful, results.Count, avgRtt);
+
+        return data;
     }
 
     private class PingResult

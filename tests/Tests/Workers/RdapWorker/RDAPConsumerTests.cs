@@ -5,7 +5,7 @@ using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Contracts.Events;
 using DistributedLookup.Domain.Entities;
-using DistributedLookup.Workers.Rdap;
+using DistributedLookup.Workers.RdapWorker;
 using FluentAssertions;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -434,6 +434,7 @@ public class RDAPConsumerTests
     private static Mock<ConsumeContext<CheckRDAP>> CreateConsumeContext(CheckRDAP msg, Action<TaskCompleted> onPublish)
     {
         var ctx = new Mock<ConsumeContext<CheckRDAP>>(MockBehavior.Strict);
+        ctx.Setup(x => x.CancellationToken).Returns(CancellationToken.None);
 
         ctx.SetupGet(c => c.Message).Returns(msg);
         ctx.SetupGet(c => c.CancellationToken).Returns(CancellationToken.None);

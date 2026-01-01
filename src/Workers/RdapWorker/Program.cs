@@ -1,6 +1,6 @@
 using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Infrastructure.Persistence;
-using DistributedLookup.Workers.Rdap;
+using DistributedLookup.Workers.RdapWorker;
 using MassTransit;
 using StackExchange.Redis;
 

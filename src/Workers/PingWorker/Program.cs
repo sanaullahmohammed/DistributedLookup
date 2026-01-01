@@ -1,6 +1,6 @@
 using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Infrastructure.Persistence;
-using DistributedLookup.Workers.Ping;
+using DistributedLookup.Workers.PingWorker;
 using MassTransit;
 using StackExchange.Redis;
 

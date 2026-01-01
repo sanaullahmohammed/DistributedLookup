@@ -5,7 +5,7 @@ using DistributedLookup.Application.Interfaces;
 using DistributedLookup.Contracts.Commands;
 using DistributedLookup.Contracts.Events;
 using DistributedLookup.Domain.Entities;
-using DistributedLookup.Workers.ReverseDNS;
+using DistributedLookup.Workers.ReverseDnsWorker;
 using FluentAssertions;
 using MassTransit;
 using Microsoft.Extensions.Logging;
@@ -323,6 +323,7 @@ public class ReverseDnsConsumerTests
         Action<TaskCompleted> onPublish)
     {
         var ctx = new Mock<ConsumeContext<CheckReverseDNS>>(MockBehavior.Strict);
+        ctx.Setup(x => x.CancellationToken).Returns(CancellationToken.None);
 
         ctx.SetupGet(c => c.Message).Returns(msg);
         ctx.SetupGet(c => c.CancellationToken).Returns(ct);
