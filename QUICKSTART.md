@@ -175,7 +175,7 @@ This will:
 2. Check their status
 3. Display results
 
-## Architecture Highlights 🆕
+## Architecture Highlights 
 
 ### Worker Base Class Pattern
 
@@ -288,7 +288,7 @@ GET lookup:job:{your-job-id}
 # View saga state
 KEYS saga:*
 
-# View worker results 🆕
+# View worker results 
 KEYS result:*
 ```
 
@@ -412,7 +412,7 @@ flowchart LR
     class RMQ queue;
 ```
 
-## Under the Hood: Code Architecture 🆕
+## Under the Hood: Code Architecture 
 
 ### Template Method Pattern in Action
 
@@ -513,7 +513,7 @@ echo "All jobs submitted!"
 
 ---
 
-## Architecture Summary 🆕
+## Architecture Summary 
 
 This system demonstrates production-ready design patterns:
 

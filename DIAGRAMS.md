@@ -19,11 +19,13 @@ graph TD
     Geo["GeoWorker<br/>(x2)"]
     Ping["PingWorker<br/>(x2)"]
     Rdap["RdapWorker<br/>(x2)"]
+    Rdap["ReverseDNS<br/>(x2)"]
 
     %% External Systems
     ExtIP["ip-api.com"]
     ExtNet["Network Stack"]
     ExtRdap["RDAP Servers"]
+    ExtRdns["DNS Servers"]
 
     %% Connections: Client to API
     Client -->|POST /api/lookup<br/>submit job| Controller
@@ -38,12 +40,14 @@ graph TD
     RabbitMQ -->|Consume| Geo
     RabbitMQ -->|Consume| Ping
     RabbitMQ -->|Consume| Rdap
+    RabbitMQ -->|Consume| Rdns
 
     %% Connections: Workers to Targets
     Saga -->|Update| Redis
     Geo -->|"External API"| ExtIP
     Ping -->|ICMP| ExtNet
     Rdap -->|"RDAP API"| ExtRdap
+    Rdns -->|"DNS API"| ExtRdns
 
     %% Styling for better visibility
     classDef storage fill:#eee,stroke:#333,stroke-width:2px;
@@ -66,7 +70,7 @@ sequenceDiagram
 
     Note over Client, Redis: 1. Job Submission Phase
     
-    Client->>API: POST /submit (Job)
+    Client->>API: POST /api/lookup (Job)
     activate API
     API->>Redis: Save Job (Pending)
     API->>RabbitMQ: Publish JobSubmitted
@@ -93,7 +97,7 @@ sequenceDiagram
 
     Note over Client, Redis: 3. Polling (Partial Status)
 
-    Client->>API: GET /status/{id}
+    Client->>API: GET /api/lookup/{jobId}
     activate API
     API->>Redis: Get Job
     Redis-->>API: Job Data
@@ -109,7 +113,7 @@ sequenceDiagram
 
     Note over Client, Redis: 4. Polling (Final Status)
 
-    Client->>API: GET /status/{id}
+    Client->>API: GET /api/lookup/{jobId}
     activate API
     API->>Redis: Get Job
     Redis-->>API: Job Data
@@ -117,7 +121,7 @@ sequenceDiagram
     deactivate API
 ```
 
-## 3. Direct Worker Persistence Flow 🆕
+## 3. Direct Worker Persistence Flow 
 
 ```mermaid
 sequenceDiagram
@@ -144,7 +148,7 @@ sequenceDiagram
     Note over W,Redis: Events contain location, not data
 ```
 
-## 4. Worker Base Class Pattern 🆕
+## 4. Worker Base Class Pattern 
 
 ```mermaid
 classDiagram
@@ -191,7 +195,7 @@ classDiagram
     note for GeoIPConsumer "Only implements:\nPerformLookupAsync()\n\nBase class handles:\neverything else!"
 ```
 
-## 5. Polymorphic Storage Architecture 🆕
+## 5. Polymorphic Storage Architecture 
 
 ```mermaid
 classDiagram
@@ -246,7 +250,7 @@ classDiagram
     note for DynamoDBResultLocation "Future: Structured data"
 ```
 
-## 6. Storage Abstraction Flow 🆕
+## 6. Storage Abstraction Flow 
 
 ```mermaid
 flowchart TD
@@ -369,7 +373,7 @@ saga:{jobId}
 ├─ pendingServices: ServiceType[]
 └─ completedServices: ServiceType[]
 
-result:{jobId}:{serviceType}  🆕
+result:{jobId}:{serviceType}  
 ├─ data: json (actual result data)
 └─ ttl: 3600 seconds
 ```
@@ -610,7 +614,7 @@ flowchart LR
 │  - Processing time per service              │
 │  - Success/failure rate                     │
 │  - Active worker count                      │
-│  - Storage backend latency 🆕               │
+│  - Storage backend latency                │
 │                                             │
 │ Redis:                                      │
 │  - Hit rate                                 │
@@ -622,7 +626,7 @@ flowchart LR
 │  - Average completion time                  │
 │  - State transition errors                  │
 │                                             │
-│ Storage Layer: 🆕                           │
+│ Storage Layer:                            │
 │  - Write latency (p50/p95/p99)              │
 │  - Backend distribution (Redis/S3/etc)      │
 │  - ResultLocation types in use              │
@@ -631,7 +635,7 @@ flowchart LR
 
 ---
 
-## Architecture Highlights 🆕
+## Architecture Highlights 
 
 ### Template Method Pattern Benefits
 

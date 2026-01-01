@@ -2,7 +2,7 @@
 
 ## What I Built
 
-A **production-quality distributed scatter-gather system** in C# (.NET 8) that aggregates network information (GeoIP, Ping, RDAP, ReverseDNS) from multiple sources using asynchronous worker orchestration.
+A **production-quality distributed scatter-gather system** in C# (.NET 10) that aggregates network information (GeoIP, Ping, RDAP, ReverseDNS) from multiple sources using asynchronous worker orchestration.
 
 ## Key Features
 
@@ -25,7 +25,7 @@ A **production-quality distributed scatter-gather system** in C# (.NET 8) that a
 
 ## Technologies Used
 
-- **.NET 8**: Modern C# with async/await
+- **.NET 10**: Modern C# with async/await
 - **MassTransit**: Message bus abstraction
 - **RabbitMQ**: Message broker (separate queues per worker type)
 - **Redis**: Fast state storage
@@ -48,15 +48,15 @@ DistributedLookup/
 │   ├── Domain/            Pure business logic (no dependencies)
 │   ├── Application/       Use cases + Saga state machine
 │   │   ├── Workers/
-│   │   │   ├── LookupWorkerBase.cs        🆕 Template method base class
-│   │   │   ├── IWorkerResultStore.cs      🆕 Storage abstraction
-│   │   │   └── IWorkerResultStoreResolver.cs 🆕 Multi-backend support
+│   │   │   ├── LookupWorkerBase.cs         Template method base class
+│   │   │   ├── IWorkerResultStore.cs       Storage abstraction
+│   │   │   └── IWorkerResultStoreResolver.cs  Multi-backend support
 │   ├── Infrastructure/    Redis repository + MassTransit config
 │   │   └── Persistence/
-│   │       └── RedisWorkerResultStore.cs  🆕 Redis storage implementation
+│   │       └── RedisWorkerResultStore.cs   Redis storage implementation
 │   ├── Contracts/         Shared messages (Commands/Events)
-│   │   ├── ResultLocation.cs              🆕 Polymorphic storage locations
-│   │   └── StorageType.cs                 🆕 Storage type enumeration
+│   │   ├── ResultLocation.cs               Polymorphic storage locations
+│   │   └── StorageType.cs                  Storage type enumeration
 │   ├── Api/               REST API (ASP.NET Core)
 │   └── Workers/
 │       ├── GeoWorker/     GeoIP lookup service
@@ -94,7 +94,7 @@ DistributedLookup/
 - DRY principle (90% code reduction)
 
 ### 3. C# & .NET Mastery
-- .NET 8 features
+- .NET 10 features
 - Async/await patterns
 - Dependency injection
 - Strong typing with records
@@ -187,13 +187,13 @@ This isn't a "hello world" implementation. It demonstrates:
 1. **README.md** - Complete overview, API usage, configuration
 2. **ARCHITECTURE.md** - Design decisions, trade-offs, roadmap
 3. **QUICKSTART.md** - Get running quickly
-4. **src/Application/Workers/LookupWorkerBase.cs** - Template method pattern 🆕
-5. **src/Application/Workers/IWorkerResultStore.cs** - Storage abstraction 🆕
+4. **src/Application/Workers/LookupWorkerBase.cs** - Template method pattern 
+5. **src/Application/Workers/IWorkerResultStore.cs** - Storage abstraction 
 6. **src/Domain/Entities/LookupJob.cs** - Rich domain model
 7. **src/Application/Saga/LookupJobStateMachine.cs** - Saga orchestration
 8. **src/Workers/GeoWorker/GeoIPConsumer.cs** - Worker implementation (only ~30 lines!)
 9. **src/Api/Controllers/LookupController.cs** - REST endpoints
-10. **src/Contracts/ResultLocation.cs** - Polymorphic storage locations 🆕
+10. **src/Contracts/ResultLocation.cs** - Polymorphic storage locations 
 11. **tests/Tests/Domain/LookupJobTests.cs** - Unit testing approach
 
 ## Running the System
@@ -241,7 +241,7 @@ docker-compose down
 - Redis for read cache
 - Connection pooling
 - Batch operations
-- Multi-backend storage (S3, DynamoDB) 🆕
+- Multi-backend storage (S3, DynamoDB) 
 
 ### Phase 5: Operations (ongoing)
 - Kubernetes deployment
@@ -282,9 +282,9 @@ curl -X POST http://localhost:8080/api/lookup \
 - Docker containerization
 - Message queue patterns
 - State machine orchestration
-- Template Method pattern 🆕
-- Strategy pattern for storage abstraction 🆕
-- Polymorphic type hierarchies 🆕
+- Template Method pattern 
+- Strategy pattern for storage abstraction 
+- Polymorphic type hierarchies 
 
 ### Software Engineering
 - TDD approach (write tests first)
@@ -293,16 +293,16 @@ curl -X POST http://localhost:8080/api/lookup \
 - Documentation writing
 - Trade-off analysis
 - Incremental delivery planning
-- Code duplication elimination 🆕
-- Interface-based design 🆕
+- Code duplication elimination 
+- Interface-based design 
 
 ### Problem Solving
 - Requirements → Architecture
 - Pattern selection with rationale
 - MVP scoping (what's essential vs. nice-to-have)
 - Production roadmap planning
-- Identifying and eliminating code duplication 🆕
-- Designing for future extensibility 🆕
+- Identifying and eliminating code duplication 
+- Designing for future extensibility 
 
 ## Evaluation Criteria Coverage
 
@@ -314,8 +314,8 @@ curl -X POST http://localhost:8080/api/lookup \
 ✅ **Clean Code**: SOLID, DDD, Clear Architecture, DRY principle  
 ✅ **Documentation**: README, ARCHITECTURE, DIAGRAMS, code comments  
 ✅ **Problem-Solving**: Clear approach documented in ARCHITECTURE.md  
-✅ **Code Reuse**: Template method pattern for worker base class 🆕  
-✅ **Extensibility**: Storage abstraction for future backends 🆕  
+✅ **Code Reuse**: Template method pattern for worker base class   
+✅ **Extensibility**: Storage abstraction for future backends   
 
 ## Why This Demonstrates Professional Skills
 
@@ -323,8 +323,8 @@ curl -X POST http://localhost:8080/api/lookup \
 2. **Not Just Working**: Production patterns, fault tolerance, scalability
 3. **Not Just MVP**: Clear path from MVP → Production
 4. **Not Just Features**: Trade-offs explained, decisions justified
-5. **Not Just Duplication**: Identified and eliminated 90% of worker code duplication 🆕
-6. **Not Just Current**: Designed for future extensibility (multi-backend storage) 🆕
+5. **Not Just Duplication**: Identified and eliminated 90% of worker code duplication 
+6. **Not Just Current**: Designed for future extensibility (multi-backend storage) 
 
 This is how I approach **real-world systems**:
 - Understand requirements deeply
@@ -332,8 +332,8 @@ This is how I approach **real-world systems**:
 - Implement with quality
 - Document thoroughly
 - Plan for growth
-- **Identify and eliminate duplication** 🆕
-- **Design for extensibility** 🆕
+- **Identify and eliminate duplication** 
+- **Design for extensibility** 
 
 ### Example: Adding a New Worker (Before vs. After)
 

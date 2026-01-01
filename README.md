@@ -62,7 +62,7 @@ flowchart TD
 
 ### Technology Stack
 
-- **.NET 8**: Modern C# with minimal APIs and top-level statements
+- **.NET 10**: Modern C# with minimal APIs and top-level statements
 - **MassTransit**: Message bus abstraction over RabbitMQ
 - **RabbitMQ**: Reliable message broker for command/event routing
 - **Redis**: Fast, volatile state storage for jobs and saga state
@@ -122,7 +122,7 @@ block-beta
 ### Prerequisites
 
 - Docker & Docker Compose
-- .NET 8 SDK (for local development)
+- .NET 10 SDK (for local development)
 
 ### Quick Start
 
@@ -325,10 +325,10 @@ public void AddResult_WhenAllServicesComplete_ShouldMarkAsCompleted()
 docker exec -it distributed-lookup-redis redis-cli
 
 # View all jobs
-KEYS job:*
+KEYS lookup:job:{jobId}
 
 # Get job details
-GET job:123e4567-e89b-12d3-a456-426614174000
+GET lookup:job:123e4567-e89b-12d3-a456-426614174000
 
 # View all saga states
 KEYS saga:*
@@ -709,14 +709,14 @@ DistributedLookup/
 │   ├── Application/         # Use cases and orchestration
 │   │   ├── UseCases/        # SubmitLookupJob, GetJobStatus
 │   │   ├── Saga/            # LookupJobStateMachine
-│   │   ├── Workers/         # 🆕 LookupWorkerBase, IWorkerResultStore
+│   │   ├── Workers/         #  LookupWorkerBase, IWorkerResultStore
 │   │   └── Interfaces/      # IJobRepository
 │   ├── Infrastructure/      # External concerns
 │   │   └── Persistence/     # RedisJobRepository, RedisWorkerResultStore
 │   ├── Contracts/           # Shared message types
 │   │   ├── Commands/        # CheckGeoIP, CheckPing, etc.
 │   │   ├── Events/          # JobSubmitted, TaskCompleted
-│   │   └── ResultLocation.cs # 🆕 Polymorphic storage locations
+│   │   └── ResultLocation.cs #  Polymorphic storage locations
 │   ├── Api/                 # REST API
 │   │   ├── Controllers/     # LookupController
 │   │   ├── Program.cs       # DI configuration
