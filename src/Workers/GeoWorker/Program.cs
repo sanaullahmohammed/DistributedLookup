@@ -1,4 +1,6 @@
-using DistributedLookup.Application.Interfaces;
+using DistributedLookup.Application.Workers;
+using DistributedLookup.Contracts;
+using DistributedLookup.Infrastructure.Configuration;
 using DistributedLookup.Infrastructure.Persistence;
 using DistributedLookup.Workers.GeoWorker;
 using MassTransit;
@@ -11,8 +13,20 @@ var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "loc
 builder.Services.AddSingleton<IConnectionMultiplexer>(
     ConnectionMultiplexer.Connect(redisConnection));
 
-// Add Repository
-builder.Services.AddScoped<IJobRepository, RedisJobRepository>();
+// Configure RedisWorkerResultStore options
+builder.Services.Configure<RedisWorkerResultStoreOptions>(
+    builder.Configuration.GetSection(RedisWorkerResultStoreOptions.SectionName));
+
+// Register IWorkerResultStore (workers use this instead of IJobRepository)
+builder.Services.AddSingleton<RedisWorkerResultStore>();
+builder.Services.AddSingleton<IWorkerResultStore>(sp => sp.GetRequiredService<RedisWorkerResultStore>());
+
+// Configure WorkerResultStoreOptions for resolver
+builder.Services.Configure<WorkerResultStoreOptions>(options =>
+{
+    options.Register<RedisWorkerResultStore>(StorageType.Redis);
+    options.DefaultStorageType = StorageType.Redis;
+});
 
 // Add HttpClient
 builder.Services.AddHttpClient<GeoIPConsumer>();

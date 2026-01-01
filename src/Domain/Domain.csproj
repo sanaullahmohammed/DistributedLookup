@@ -7,4 +7,9 @@
     <RootNamespace>DistributedLookup.Domain</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Infrastructure" />
+    <InternalsVisibleTo Include="Tests" />
+  </ItemGroup>
+
 </Project>

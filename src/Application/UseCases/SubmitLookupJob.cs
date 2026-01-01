@@ -29,30 +29,33 @@ public class SubmitLookupJob
             return Result.Failure(validationResult.Error!);
         }
 
-        // Create job entity
+        // Create job entity using factory pattern with shared timestamp
+        // This ensures CreatedAt is consistent between job, saga, and event
         var jobId = Guid.NewGuid().ToString();
+        var createdAt = DateTime.UtcNow;
         var services = request.Services?.Any() == true 
             ? request.Services 
             : GetDefaultServices();
 
-        var job = new LookupJob(
+        var job = LookupJobFactory.Create(
             jobId,
             request.Target,
             validationResult.TargetType!.Value,
-            services
+            services,
+            createdAt
         );
 
         // Persist job
         await _repository.SaveAsync(job, cancellationToken);
 
-        // Publish event (fire and forget - saga will handle)
+        // Publish event with same timestamp as job creation
         await _publisher.Publish(new JobSubmitted
         {
             JobId = jobId,
             Target = request.Target,
             TargetType = validationResult.TargetType.Value,
             Services = services.ToArray(),
-            Timestamp = DateTime.UtcNow
+            Timestamp = createdAt
         }, cancellationToken);
 
         return Result.Success(jobId);
