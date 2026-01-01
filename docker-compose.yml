@@ -96,7 +96,7 @@ services:
       api:
         condition: service_healthy
     deploy:
-      replicas: 1
+      replicas: 2
     networks:
       - lookup-network
 
@@ -116,7 +116,7 @@ services:
       api:
         condition: service_healthy
     deploy:
-      replicas: 1
+      replicas: 2
     networks:
       - lookup-network
 
@@ -138,7 +138,7 @@ services:
       api:
         condition: service_healthy
     deploy:
-      replicas: 1
+      replicas: 2
     networks:
       - lookup-network
 
